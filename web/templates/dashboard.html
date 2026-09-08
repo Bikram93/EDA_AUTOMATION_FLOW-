@@ -1,0 +1,143 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Dashboard | EDA Flow Automation{% endblock %}
+
+{% block content %}
+
+<!-- 1. System Health Telemetry Cards -->
+<section class="grid-4">
+    <div class="card">
+        <div class="card-title">Host CPU Load</div>
+        <div class="card-value" id="metric-cpu">{{ health.cpu_utilization }}%</div>
+        <div class="card-subtitle">Real-time DRMS telemetry</div>
+    </div>
+    <div class="card">
+        <div class="card-title">Host RAM Usage</div>
+        <div class="card-value" id="metric-mem">{{ health.memory_utilization }}%</div>
+        <div class="card-subtitle">Dynamic memory allocation</div>
+    </div>
+    <div class="card">
+        <div class="card-title">Worker Slots</div>
+        <div class="card-value" id="metric-slots">{{ health.active_jobs }} / {{ health.max_jobs }}</div>
+        <div class="card-subtitle">Active concurrency limit</div>
+    </div>
+    <div class="card">
+        <div class="card-title">Total Pipelines</div>
+        <div class="card-value">{{ pipelines|length if pipelines else 1 }}</div>
+        <div class="card-subtitle">Recorded flow executions</div>
+    </div>
+</section>
+
+<!-- 2. Active Pipeline Interactive DAG View (if selected) -->
+{% if active_pipeline %}
+<section class="card" style="margin-bottom: 2rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <div>
+            <h2>{{ active_pipeline.name }}</h2>
+            <div style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 0.25rem;">
+                Pipeline ID: <code>{{ active_pipeline.id }}</code> | Created: {{ active_pipeline.created_at }}
+            </div>
+        </div>
+        <div>
+            <span class="badge badge-{{ active_pipeline.status|lower }}">{{ active_pipeline.status }}</span>
+        </div>
+    </div>
+
+    <!-- Cytoscape DAG Canvas -->
+    <div id="cy" data-pipeline-id="{{ active_pipeline.id }}"></div>
+
+    <!-- Task Execution Breakdown Table -->
+    <h3 style="margin-top: 1.5rem; margin-bottom: 0.5rem; font-size: 1rem;">Stage Execution Details</h3>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Stage ID</th>
+                    <th>Stage Name</th>
+                    <th>Status</th>
+                    <th>Predecessors</th>
+                    <th>Started At</th>
+                    <th>Ended At</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td><code>{{ task.id }}</code></td>
+                    <td style="font-weight: 600;">{{ task.name }}</td>
+                    <td><span class="badge badge-{{ task.status|lower }}">{{ task.status }}</span></td>
+                    <td>{{ task.dependencies if task.dependencies else "None (Source)" }}</td>
+                    <td>{{ task.started_at if task.started_at else "-" }}</td>
+                    <td>{{ task.ended_at if task.ended_at else "-" }}</td>
+                    <td>
+                        <a href="{{ url_for('job_detail', task_id=task.id) }}" class="btn btn-primary" style="padding: 0.3rem 0.75rem; font-size: 0.8rem;">
+                            View Logs
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
+<!-- 3. Launch New Flow & Recent Pipelines Table -->
+<div class="grid-2">
+    <!-- Pipeline Submission Form -->
+    <div class="card">
+        <h3 style="margin-bottom: 1rem; font-size: 1.1rem;">Launch New EDA Pipeline</h3>
+        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1.25rem;">
+            Submits an end-to-end VLSI digital design flow: RTL Synthesis &rarr; Floorplan &rarr; Placement &rarr; CTS &rarr; Routing &rarr; Signoff.
+        </p>
+        <form action="{{ url_for('api_create_pipeline') }}" method="POST">
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.4rem;">Design Block / Run Name</label>
+                <input type="text" name="name" required placeholder="e.g. RISC-V 32b Core Synthesis Run" 
+                       style="width: 100%; padding: 0.65rem 0.85rem; background: #0c1220; border: 1px solid var(--border-color); border-radius: 6px; color: #fff; font-size: 0.9rem;">
+            </div>
+            <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center;">
+                Launch Pipeline Run
+            </button>
+        </form>
+    </div>
+
+    <!-- Historical Pipelines List -->
+    <div class="card">
+        <h3 style="margin-bottom: 1rem; font-size: 1.1rem;">Pipeline History</h3>
+        {% if pipelines %}
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Design Name</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in pipelines %}
+                    <tr>
+                        <td>
+                            <div style="font-weight: 600;">{{ p.name }}</div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">{{ p.id }}</div>
+                        </td>
+                        <td><span class="badge badge-{{ p.status|lower }}">{{ p.status }}</span></td>
+                        <td>
+                            <a href="{{ url_for('pipeline_detail', pipeline_id=p.id) }}" class="btn btn-primary" style="padding: 0.3rem 0.65rem; font-size: 0.75rem;">
+                                Inspect DAG
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p style="color: var(--text-muted); font-size: 0.9rem;">No pipelines executed yet. Launch a flow above to begin.</p>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

@@ -192,4 +192,4 @@ Open your browser and navigate to: `http://127.0.0.1:5000`
 - [x] Distributed Resource Management System (`src/drms.py`)
 - [x] NetworkX DAG scheduler engine (`src/scheduler.py`)
 - [x] Central Hub orchestrator daemon (`src/server.py`)
-- [ ] Flask web interface & Cytoscape.js DAG visualization (`web/`) [Next on dev_serv]
+- [x] Flask web interface & Cytoscape.js DAG visualization (`web/`)

@@ -1,0 +1,58 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Stage Detail: {{ task.name }} | EDA Flow Automation{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+    <div>
+        <a href="{{ url_for('pipeline_detail', pipeline_id=pipeline.id) }}" style="color: var(--accent-blue); text-decoration: none; font-size: 0.9rem;">
+            &larr; Back to Pipeline DAG ({{ pipeline.name }})
+        </a>
+        <h1 style="margin-top: 0.5rem;">{{ task.name }}</h1>
+        <div style="color: var(--text-secondary); font-size: 0.85rem;">
+            Task ID: <code>{{ task.id }}</code> | Pipeline: <code>{{ pipeline.id }}</code>
+        </div>
+    </div>
+    <div>
+        <span class="badge badge-{{ task.status|lower }}" style="font-size: 0.9rem; padding: 0.4rem 0.9rem;">
+            {{ task.status }}
+        </span>
+    </div>
+</div>
+
+<!-- Task Telemetry Card -->
+<div class="grid-3">
+    <div class="card">
+        <div class="card-title">Dependencies</div>
+        <div class="card-value" style="font-size: 1.1rem;">
+            {{ task.dependencies if task.dependencies else "None (Root Stage)" }}
+        </div>
+        <div class="card-subtitle">Required predecessor tasks</div>
+    </div>
+    <div class="card">
+        <div class="card-title">Execution Started</div>
+        <div class="card-value" style="font-size: 1.1rem;">
+            {{ task.started_at if task.started_at else "Not Started" }}
+        </div>
+        <div class="card-subtitle">Timestamp recorded by orchestrator</div>
+    </div>
+    <div class="card">
+        <div class="card-title">Execution Finished</div>
+        <div class="card-value" style="font-size: 1.1rem;">
+            {{ task.ended_at if task.ended_at else "In Progress / Pending" }}
+        </div>
+        <div class="card-subtitle">Completion timestamp</div>
+    </div>
+</div>
+
+<!-- Execution Log Stream Terminal -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+        <h3 style="font-size: 1rem;">Execution Output Log</h3>
+        <span style="font-size: 0.8rem; color: var(--text-muted);">
+            Live updates enabled (polling every 2s)
+        </span>
+    </div>
+    <pre id="live-logs" class="terminal-window" data-task-id="{{ task.id }}" data-task-status="{{ task.status }}">{{ log_content }}</pre>
+</div>
+{% endblock %}
