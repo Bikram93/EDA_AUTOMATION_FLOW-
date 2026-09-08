@@ -84,3 +84,34 @@ class DRMSManager:
             SystemMetricsModel.record(round(cpu, 1), round(mem, 1))
         except Exception as e:
             logger.error(f"Failed to record system metrics into database: {e}")
+
+
+class DRMSMonitor:
+    """Telemetry monitor daemon wrapper matching user specification."""
+
+    def __init__(self, interval: int = 5):
+        self.interval = interval
+        self._thread = None
+        self._stop_event = threading.Event()
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+
+        def _run():
+            logger.info("DRMSMonitor telemetry daemon started.")
+            # Warm up cpu
+            psutil.cpu_percent(interval=0.1)
+            while not self._stop_event.is_set():
+                DRMSManager.record_metrics_to_db()
+                self._stop_event.wait(self.interval)
+
+        self._thread = threading.Thread(target=_run, daemon=True, name="DRMS-Telemetry")
+        self._thread.start()
+
+    def stop(self):
+        if self._thread:
+            self._stop_event.set()
+            self._thread.join(timeout=2.0)
+            logger.info("DRMSMonitor telemetry daemon stopped.")
