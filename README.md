@@ -1,12 +1,12 @@
 # EDA Flow Automation System
 
-An enterprise-grade, distributed workflow automation and orchestration platform designed specifically for semiconductor and VLSI digital design flows (RTL Synthesis, Floorplanning, Placement, Clock Tree Synthesis, Routing, and Signoff Timing/DRC).
+An enterprise-grade, distributed workflow automation and orchestration platform designed specifically for semiconductor and VLSI digital design flows (RTL Synthesis, Floorplanning, Placement, Clock Tree Synthesis, Routing, Signoff Timing, and Physical Verification DRC/LVS).
 
 ---
 
 ## 1. System Architecture Overview
 
-The system bridges low-level EDA tool execution with modern web-based monitoring, DAG dependency resolution, and resource allocation:
+The platform bridges high-level web control with low-level EDA tool execution, graph-based job scheduling, and hardware admission control:
 
 ```
 +-------------------------------------------------------------------------+
@@ -23,8 +23,8 @@ The system bridges low-level EDA tool execution with modern web-based monitoring
 |                                                                         |
 |   +-------------------+  +--------------------+  +------------------+   |
 |   |   src/server.py   |  |  src/scheduler.py  |  |    src/drms.py   |   |
-|   |   (Central Hub /  |->|   (NetworkX DAG    |->|   (Distributed   |   |
-|   |    Orchestrator)  |  |    Job Engine)     |  |  Resource Mgr)   |   |
+|   | (JobOrchestrator  |->|   (NetworkX DAG    |->|  (DRMSMonitor &  |   |
+|   |  Hub & Workers)   |  |    Job Engine)     |  |   Admission Ctrl)|   |
 |   +-------------------+  +--------------------+  +------------------+   |
 |            |                        |                       |           |
 |            +------------------------+-----------------------+           |
@@ -45,9 +45,9 @@ The system bridges low-level EDA tool execution with modern web-based monitoring
 ```text
 eda_flow_project/
 |
-|-- .env                        # Environment variables (DB path, log levels, concurrency)
-|-- .gitignore                  # Git exclusions (venv, db, logs, workspaces)
-|-- README.md                   # Comprehensive project documentation
+|-- .env                        # Environment variables (DB path, log levels, concurrency limits)
+|-- .gitignore                  # Git exclusions (venv, db, logs, agy.md, cache)
+|-- README.md                   # Comprehensive project documentation & API guide
 |-- requirements.txt            # Production dependencies
 |-- setup.py                    # Package installation & CLI entry points
 |
@@ -64,24 +64,24 @@ eda_flow_project/
 |
 |-- src/                        # Core Application Backend
 |   |-- __init__.py
-|   |-- server.py               # Central Hub / Orchestrator (Coordinates workers)
-|   |-- drms.py                 # Distributed Resource Management (System health, node limits)
+|   |-- server.py               # Central Hub / JobOrchestrator (Coordinates workers)
+|   |-- drms.py                 # Distributed Resource Management (DRMSMonitor, node limits)
 |   |-- scheduler.py            # DAG Job Engine (NetworkX pipeline parser & runner)
 |   `-- utils/                  # Shared backend utilities
 |       |-- __init__.py
-|       `-- logger.py           # Structured multi-handler production logger
+|       `-- logger.py           # Structured production logger
 |
 `-- web/                        # Front-End Web GUI (Flask + Jinja2)
     |-- __init__.py
     |-- app.py                  # Flask Application entry point & route definitions
-    |-- static/                 # Static Assets (UI Styling & High-performance graphs)
+    |-- static/                 # Static Assets (UI Styling & Cytoscape graphs)
     |   |-- css/
     |   |   `-- style.css       # Clean dark/light theme for VLSI dashboards
     |   `-- js/
     |       `-- main.js         # Cytoscape.js DAG visualization & live polling
     `-- templates/              # Jinja2 HTML Templates
-        |-- base.html           # Main boilerplate layout
-        |-- dashboard.html      # Central layout view (DAG visualization, health metrics)
+        |-- base.html           # Main boilerplate layout & Cytoscape CDN
+        |-- dashboard.html      # Central dashboard (DAG visualizer, health metrics)
         `-- job_detail.html     # Deep dive into specific execution logs
 ```
 
@@ -91,67 +91,184 @@ eda_flow_project/
 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
-| **Web Server** | Flask 3.0.3, Jinja2 3.1.4 | Lightweight, production-proven WSGI microframework suitable for low-latency operational dashboards. |
-| **DAG Scheduling** | NetworkX 3.3 | Mathematical graph manipulation engine for cycle detection, topological sorting, and upstream dependency resolution. |
-| **Resource Monitor** | psutil 5.9.8 | Cross-platform hardware telemetry (CPU %, memory %, core counts) enabling dynamic admission control (DRMS). |
-| **Database** | SQLite 3 (WAL Mode) | Zero-maintenance embedded relational database. Write-Ahead Logging (WAL) allows concurrent reads without locking writers. |
+| **Web Server** | Flask 3.0.3, Jinja2 3.1.4 | Lightweight WSGI microframework for high-performance operational dashboards. |
+| **DAG Scheduling** | NetworkX 3.3 | Graph manipulation engine for cycle validation, topological order, and failure cascading. |
+| **Resource Monitor** | psutil 5.9.8 | Cross-platform hardware telemetry (CPU %, memory %) enabling dynamic admission control (DRMS). |
+| **Database** | SQLite 3 (WAL Mode) | Zero-maintenance embedded database. Write-Ahead Logging (`WAL`) allows concurrent reads during writes. |
 | **Frontend Graphs** | Cytoscape.js | High-performance graph theory library supporting hierarchical DAG rendering and interactive node inspection. |
 | **Data Analytics** | Pandas 2.2.2 | Ingests and summarizes execution metrics, runtime timelines, and Quality of Results (QoR). |
 
 ---
 
-## 4. Detailed Component Breakdown
+## 4. REST API Reference (Inputs & Expected Outputs)
 
-### 4.1. Configuration Layer (`config/`)
-- **`config/settings.py`**:
-  - Uses `python-dotenv` to parse environment variables from `.env`.
-  - Defines `BASE_DIR` dynamically so relative paths work regardless of execution directory.
-  - Controls parameters such as `MAX_CONCURRENT_JOBS` (default: 4) and `SYSTEM_MONITOR_INTERVAL_SECS` (default: 5).
+### 4.1. Submit a New Pipeline (`POST /pipeline/submit` or `POST /api/pipeline/create`)
+Submits a new EDA workflow. Spawns standard stages: RTL Synthesis &rarr; Floorplanning &rarr; Place & Route &rarr; Parallel (DRC & LVS).
 
-### 4.2. Database Layer (`database/`)
-- **`database/schema.sql`**:
-  - `pipelines`: Tracks top-level flow executions (e.g. `riscv_core_flow`).
-  - `tasks`: Represents each stage (`Synthesis`, `Floorplan`, `Placement`, `CTS`, `Routing`, `STA`). Contains `dependencies` stored as comma-separated task IDs.
-  - `system_metrics`: Stores periodic CPU and RAM utilization metrics collected by the DRMS.
-- **`database/connection.py`**:
-  - `DatabaseManager`: Implements thread-local storage (`threading.local()`) so worker threads do not share connections.
-  - Enables `PRAGMA journal_mode=WAL;` and `sqlite3.Row` for fast, dictionary-style row access.
-- **`database/models.py`**:
-  - `PipelineModel`: `create()`, `update_status()`, `get_all()`, `get_by_id()`
-  - `TaskModel`: `create()`, `update_status()`, `get_by_pipeline()`, `get_by_id()`
-  - `SystemMetricsModel`: `record()`, `get_recent()`
+- **URL**: `/pipeline/submit`
+- **Method**: `POST`
+- **Headers**: `Content-Type: application/json`
 
-### 4.3. Core Backend Engine (`src/`)
-- **`src/utils/logger.py`**:
-  - Multi-target logging (rotating files in `logs/` + colorized console output).
-- **`src/drms.py` (Distributed Resource Management System)**:
-  - Telemetry daemon that samples host CPU and RAM.
-  - Prevents server crashes by enforcing admission control: jobs are only dispatched if system utilization stays below thresholds (`MAX_CPU_PERCENT`, `MAX_MEMORY_PERCENT`).
-- **`src/scheduler.py` (DAG Engine)**:
-  - Parses stage dependency strings into a `networkx.DiGraph`.
-  - Computes ready tasks whose parent dependencies have status `COMPLETED`.
-  - Cascades `SKIPPED` status to downstream tasks if an upstream parent stage fails (e.g. syntax error in Synthesis skips Routing).
-- **`src/server.py` (Central Hub / Orchestrator)**:
-  - Heartbeat coordination loop: periodically polls ready tasks, verifies DRMS slot capacity, dispatches child worker processes, redirects stdout/stderr to task-specific log files, and updates database records.
+#### Sample Input (cURL):
+```bash
+curl -X POST http://127.0.0.1:5000/pipeline/submit      -H "Content-Type: application/json"      -d '{"name": "RISC-V 32b Core Synthesis Run"}'
+```
 
-### 4.4. Web GUI (`web/`)
-- **`web/app.py`**:
-  - Flask endpoints for dashboard rendering, pipeline submission, and live JSON telemetry (`/api/metrics`, `/api/pipeline/<id>/dag`).
-- **`web/static/js/main.js`**:
-  - Powers interactive Cytoscape DAG graphs:
-    - **Grey**: `PENDING`
-    - **Blue**: `RUNNING`
-    - **Green**: `COMPLETED`
-    - **Red**: `FAILED`
-    - **Orange**: `SKIPPED`
-- **`web/templates/`**:
-  - Semantic HTML5 templates styled with responsive dark/light CSS.
+#### Expected Output (Status: `201 Created`):
+```json
+{
+  "pipeline_id": "pipe_767acf49",
+  "pipeline_name": "RISC-V 32b Core Synthesis Run",
+  "status": "success",
+  "task_count": 5
+}
+```
+
+---
+
+### 4.2. Fetch Interactive Cytoscape DAG (`GET /api/pipeline/<pipeline_id>/graph`)
+Retrieves the mathematical graph structure serialized for Cytoscape.js.
+
+- **URL**: `/api/pipeline/<pipeline_id>/graph`
+- **Method**: `GET`
+
+#### Sample Input (cURL):
+```bash
+curl -X GET http://127.0.0.1:5000/api/pipeline/pipe_767acf49/graph
+```
+
+#### Expected Output (Status: `200 OK`):
+```json
+[
+  {
+    "data": {
+      "id": "syn_pipe_767acf49",
+      "label": "RTL Synthesis (COMPLETED)",
+      "name": "RTL Synthesis",
+      "status": "COMPLETED"
+    }
+  },
+  {
+    "data": {
+      "id": "floorplan_pipe_767acf49",
+      "label": "Floorplanning (RUNNING)",
+      "name": "Floorplanning",
+      "status": "RUNNING"
+    }
+  },
+  {
+    "data": {
+      "id": "syn_pipe_767acf49->floorplan_pipe_767acf49",
+      "source": "syn_pipe_767acf49",
+      "target": "floorplan_pipe_767acf49"
+    }
+  }
+]
+```
+
+---
+
+### 4.3. Real-Time Pipeline Status (`GET /api/pipeline/<pipeline_id>/status`)
+Polled by frontend controllers to update status badges in real time.
+
+- **URL**: `/api/pipeline/<pipeline_id>/status`
+- **Method**: `GET`
+
+#### Sample Input (cURL):
+```bash
+curl -X GET http://127.0.0.1:5000/api/pipeline/pipe_767acf49/status
+```
+
+#### Expected Output (Status: `200 OK`):
+```json
+{
+  "pipeline": {
+    "created_at": "2026-09-08 23:00:30",
+    "id": "pipe_767acf49",
+    "name": "RISC-V 32b Core Synthesis Run",
+    "status": "RUNNING"
+  },
+  "tasks": [
+    {
+      "dependencies": "",
+      "ended_at": "2026-09-08 23:00:34",
+      "id": "syn_pipe_767acf49",
+      "name": "RTL Synthesis",
+      "pipeline_id": "pipe_767acf49",
+      "started_at": "2026-09-08 23:00:30",
+      "status": "COMPLETED"
+    },
+    {
+      "dependencies": "syn_pipe_767acf49",
+      "ended_at": null,
+      "id": "floorplan_pipe_767acf49",
+      "name": "Floorplanning",
+      "pipeline_id": "pipe_767acf49",
+      "started_at": "2026-09-08 23:00:34",
+      "status": "RUNNING"
+    }
+  ]
+}
+```
+
+---
+
+### 4.4. DRMS Host Health Telemetry (`GET /api/health`)
+Returns live host CPU, memory, and concurrency slot utilization.
+
+- **URL**: `/api/health`
+- **Method**: `GET`
+
+#### Sample Input (cURL):
+```bash
+curl -X GET http://127.0.0.1:5000/api/health
+```
+
+#### Expected Output (Status: `200 OK`):
+```json
+{
+  "active_jobs": 1,
+  "available_slots": 3,
+  "cpu_utilization": 18.4,
+  "max_jobs": 4,
+  "memory_utilization": 72.1
+}
+```
+
+---
+
+### 4.5. Stream Task Execution Logs (`GET /api/job/<task_id>/logs`)
+Returns stdout/stderr logs for a specific EDA stage.
+
+- **URL**: `/api/job/<task_id>/logs`
+- **Method**: `GET`
+
+#### Sample Input (cURL):
+```bash
+curl -X GET http://127.0.0.1:5000/api/job/syn_pipe_767acf49/logs
+```
+
+#### Expected Output (Status: `200 OK`):
+```json
+{
+  "logs": "=== EDA Task Execution: RTL Synthesis (syn_pipe_767acf49) ===
+Pipeline: pipe_767acf49
+Started at: 2026-09-08 23:00:30
+
+[INFO] Initializing EDA tool environment for RTL Synthesis...
+[INFO] Processing stage inputs and geometry...
+[INFO] Running design rule and timing checks...
+[INFO] Stage RTL Synthesis completed with 0 errors.
+Ended at: 2026-09-08 23:00:34
+"
+}
+```
 
 ---
 
 ## 5. Quickstart Guide
 
-### 5.1. Environment Activation
+### 5.1. Activate Environment
 ```powershell
 # In PowerShell (Windows)
 .\venv\Scripts\Activate.ps1
@@ -168,17 +285,11 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 5.3. Initialize the Database
-```python
-from database.connection import DatabaseManager
-DatabaseManager.init_db()
-```
-
-### 5.4. Launch the Web Dashboard
+### 5.3. Launch the Application
 ```bash
 python -m web.app
 ```
-Open your browser and navigate to: `http://127.0.0.1:5000`
+Open your browser at: **`http://127.0.0.1:5000`**
 
 ---
 

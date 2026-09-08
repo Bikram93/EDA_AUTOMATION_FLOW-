@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 
 {% block title %}Dashboard | EDA Flow Automation{% endblock %}
 
@@ -91,7 +91,7 @@
         <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1.25rem;">
             Submits an end-to-end VLSI digital design flow: RTL Synthesis &rarr; Floorplan &rarr; Placement &rarr; CTS &rarr; Routing &rarr; Signoff.
         </p>
-        <form action="{{ url_for('api_create_pipeline') }}" method="POST">
+        <form action="{{ url_for('submit_pipeline') }}" method="POST">
             <div style="margin-bottom: 1rem;">
                 <label style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.4rem;">Design Block / Run Name</label>
                 <input type="text" name="name" required placeholder="e.g. RISC-V 32b Core Synthesis Run" 

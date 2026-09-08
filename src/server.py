@@ -2,7 +2,6 @@
 import threading
 import signal
 import sys
-import subprocess
 from pathlib import Path
 from config.settings import Config
 from database.connection import DatabaseManager
@@ -134,7 +133,6 @@ class OrchestratorServer:
                 log_f.write(f"Started at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
                 # Simulated EDA stage execution
-                # (In production, replace with subprocess.Popen for Yosys, OpenROAD, OpenSTA, etc.)
                 log_f.write(f"[INFO] Initializing EDA tool environment for {task_name}...\n")
                 log_f.flush()
                 time.sleep(2.0)  # Simulated processing time
@@ -170,6 +168,33 @@ class OrchestratorServer:
             is_done, final_status = DAGScheduler.check_pipeline_completion(pipeline_id)
             if is_done:
                 logger.info(f"Pipeline '{pipeline_id}' FINISHED with status: {final_status}")
+
+
+class JobOrchestrator(OrchestratorServer):
+    """
+    Job Orchestrator providing static dispatch_new_pipeline() method
+    matching user specification.
+    """
+    _instance = None
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = OrchestratorServer(poll_interval=2.0)
+            cls._instance.start(blocking=False)
+        return cls._instance
+
+    @classmethod
+    def dispatch_new_pipeline(cls, pipeline_id: str, pipeline_name: str, tasks: list):
+        """Dispatches a new pipeline into SQLite and ensures orchestrator loop is active."""
+        DatabaseManager.init_db()
+        PipelineModel.create(pipeline_id, pipeline_name)
+        for task in tasks:
+            deps = task.get("dependencies", [])
+            TaskModel.create(task["id"], pipeline_id, task["name"], deps)
+
+        logger.info(f"Dispatched new pipeline '{pipeline_id}' ({pipeline_name}) with {len(tasks)} tasks.")
+        cls.get_instance()
 
 
 def main():

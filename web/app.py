@@ -1,13 +1,13 @@
-﻿import os
-import uuid
-from pathlib import Path
 from flask import Flask, render_template, request, jsonify, redirect, url_for
+import uuid
+import os
+from pathlib import Path
 from config.settings import Config
 from database.connection import DatabaseManager
 from database.models import PipelineModel, TaskModel, SystemMetricsModel
-from src.drms import DRMSManager
+from src.server import JobOrchestrator, OrchestratorServer
+from src.drms import DRMSMonitor, DRMSManager
 from src.scheduler import DAGScheduler
-from src.server import OrchestratorServer
 from src.utils.logger import get_logger
 
 logger = get_logger("WebGUI")
@@ -18,44 +18,101 @@ app = Flask(
     template_folder=str(Path(__file__).resolve().parent / "templates"),
     static_folder=str(Path(__file__).resolve().parent / "static")
 )
-app.config["SECRET_KEY"] = getattr(Config, "SECRET_KEY", "eda-secret-key-default")
+app.config.from_object(Config)
 
-# Orchestrator background instance
-orchestrator = None
+# Initialize database and background telemetry system
+DatabaseManager.init_db()
+drms = DRMSMonitor(interval=getattr(Config, "SYSTEM_MONITOR_INTERVAL_SECS", 5))
+drms.start()
+
+# Initialize background job orchestrator
+orchestrator = JobOrchestrator.get_instance()
 
 
 # ----------------------------------------------------------------------------
-# HTML UI Routes
+# Web UI Routes
 # ----------------------------------------------------------------------------
 
 @app.route("/")
-def dashboard():
-    """Renders the main dashboard overview with pipelines & system health."""
+def index():
+    """Renders main dashboard overview with pipelines & system telemetry."""
     pipelines = PipelineModel.get_all()
     health = DRMSManager.get_system_health()
-    recent_metrics = SystemMetricsModel.get_recent(limit=15)
+    metrics = DatabaseManager.execute_read(
+        "SELECT * FROM system_metrics ORDER BY timestamp DESC LIMIT 1"
+    )
+    current_metrics = dict(metrics[0]) if metrics else {"cpu_utilization": 0, "memory_utilization": 0}
+
     return render_template(
         "dashboard.html",
         pipelines=pipelines,
         health=health,
-        metrics=recent_metrics
+        metrics=current_metrics
     )
 
 
+# URL rule alias for template compatibility
+app.add_url_rule('/', endpoint='dashboard', view_func=index)
+
+
+@app.route("/pipeline/submit", methods=["POST"])
+@app.route("/api/pipeline/create", methods=["POST"])
+def submit_pipeline():
+    """
+    Submits a new standard production EDA flow run:
+    Synthesis -> Floorplan -> Place & Route -> (Parallel: DRC and LVS).
+    """
+    pipeline_name = request.form.get("name") if request.form else None
+    if not pipeline_name and request.is_json:
+        pipeline_name = request.json.get("name")
+    if not pipeline_name:
+        pipeline_name = "EDA_Flow_Run"
+
+    pipeline_id = f"pipe_{uuid.uuid4().hex[:8]}"
+
+    # Production Standard Design Validation Flow Definition (with Parallel DRC & LVS)
+    tasks = [
+        {"id": f"syn_{pipeline_id}", "name": "RTL Synthesis", "dependencies": []},
+        {"id": f"floorplan_{pipeline_id}", "name": "Floorplanning", "dependencies": [f"syn_{pipeline_id}"]},
+        {"id": f"pnr_{pipeline_id}", "name": "Place & Route", "dependencies": [f"floorplan_{pipeline_id}"]},
+        {"id": f"drc_{pipeline_id}", "name": "Design Rule Check (DRC)", "dependencies": [f"pnr_{pipeline_id}"]},
+        {"id": f"lvs_{pipeline_id}", "name": "Layout Vs Schematic (LVS)", "dependencies": [f"pnr_{pipeline_id}"]}
+    ]
+
+    JobOrchestrator.dispatch_new_pipeline(pipeline_id, pipeline_name, tasks)
+
+    if request.is_json:
+        return jsonify({
+            "status": "success",
+            "pipeline_id": pipeline_id,
+            "pipeline_name": pipeline_name,
+            "task_count": len(tasks)
+        }), 201
+
+    return redirect(url_for("index"))
+
+
 @app.route("/pipeline/<pipeline_id>")
-def pipeline_detail(pipeline_id):
-    """Renders the pipeline detail page with interactive Cytoscape DAG visualization."""
+def pipeline_details(pipeline_id):
+    """Renders pipeline view with interactive Cytoscape DAG and task table."""
     pipeline = PipelineModel.get_by_id(pipeline_id)
     if not pipeline:
         return "Pipeline not found", 404
 
     tasks = TaskModel.get_by_pipeline(pipeline_id)
+    health = DRMSManager.get_system_health()
+
     return render_template(
         "dashboard.html",
         active_pipeline=pipeline,
         tasks=tasks,
-        health=DRMSManager.get_system_health()
+        health=health,
+        pipelines=PipelineModel.get_all()
     )
+
+
+# URL rule alias for template compatibility
+app.add_url_rule('/pipeline/<pipeline_id>', endpoint='pipeline_detail', view_func=pipeline_details)
 
 
 @app.route("/job/<task_id>")
@@ -67,7 +124,7 @@ def job_detail(task_id):
 
     pipeline = PipelineModel.get_by_id(task["pipeline_id"])
     log_file = Path(getattr(Config, "LOG_DIR", "logs")) / f"{task['pipeline_id']}_{task_id}.log"
-    log_content = "Log file not yet generated or stage has not started."
+    log_content = "Log file not yet generated or stage is still waiting to execute."
 
     if log_file.exists():
         try:
@@ -88,66 +145,50 @@ def job_detail(task_id):
 # REST API Endpoints
 # ----------------------------------------------------------------------------
 
+@app.route("/api/pipeline/<pipeline_id>/graph")
+@app.route("/api/pipeline/<pipeline_id>/dag")
+def pipeline_graph_json(pipeline_id):
+    """
+    Returns Cytoscape.js formatted elements array:
+    Nodes: [{"data": {"id": "...", "label": "...", "status": "..."}}]
+    Edges: [{"data": {"source": "...", "target": "..."}}]
+    """
+    tasks = TaskModel.get_by_pipeline(pipeline_id)
+    elements = []
+
+    for task in tasks:
+        elements.append({
+            "data": {
+                "id": task["id"],
+                "name": task["name"],
+                "label": f"{task['name']} ({task['status']})",
+                "status": task["status"]
+            }
+        })
+        if task["dependencies"]:
+            for dep in task["dependencies"].split(","):
+                dep_clean = dep.strip()
+                if dep_clean:
+                    elements.append({
+                        "data": {
+                            "id": f"{dep_clean}->{task['id']}",
+                            "source": dep_clean,
+                            "target": task["id"]
+                        }
+                    })
+
+    return jsonify(elements)
+
+
 @app.route("/api/health")
 def api_health():
     """Returns real-time host telemetry (CPU, RAM, slots)."""
     return jsonify(DRMSManager.get_system_health())
 
 
-@app.route("/api/metrics/recent")
-def api_recent_metrics():
-    """Returns historical CPU/RAM telemetry for dashboard charts."""
-    rows = SystemMetricsModel.get_recent(limit=30)
-    data = [dict(r) for r in rows]
-    return jsonify(data)
-
-
-@app.route("/api/pipeline/create", methods=["POST"])
-def api_create_pipeline():
-    """
-    Submits a new EDA flow pipeline.
-    Accepts JSON payload or HTML Form:
-    - name: Design name (e.g. 'RISC-V Core Signoff Flow')
-    - stages: Optional custom stages; defaults to standard 5-stage VLSI flow.
-    """
-    name = request.form.get("name") or request.json.get("name", "Standard EDA Flow") if request.is_json else request.form.get("name", "Standard EDA Flow")
-    pipe_id = f"pipe-{uuid.uuid4().hex[:8]}"
-
-    # Standard VLSI Stage Recipe
-    default_stages = [
-        {"id": f"{pipe_id}_synth", "name": "RTL Synthesis", "deps": []},
-        {"id": f"{pipe_id}_floorplan", "name": "Floorplanning & Power Grid", "deps": [f"{pipe_id}_synth"]},
-        {"id": f"{pipe_id}_placement", "name": "Standard Cell Placement", "deps": [f"{pipe_id}_floorplan"]},
-        {"id": f"{pipe_id}_cts", "name": "Clock Tree Synthesis (CTS)", "deps": [f"{pipe_id}_placement"]},
-        {"id": f"{pipe_id}_routing", "name": "Detailed Routing", "deps": [f"{pipe_id}_cts"]},
-        {"id": f"{pipe_id}_signoff", "name": "Signoff STA & DRC", "deps": [f"{pipe_id}_routing"]},
-    ]
-
-    PipelineModel.create(pipe_id, name)
-    for stage in default_stages:
-        TaskModel.create(stage["id"], pipe_id, stage["name"], stage["deps"])
-
-    logger.info(f"Created pipeline '{pipe_id}' with {len(default_stages)} stages.")
-
-    if request.is_json:
-        return jsonify({"status": "success", "pipeline_id": pipe_id}), 201
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/api/pipeline/<pipeline_id>/dag")
-def api_pipeline_dag(pipeline_id):
-    """Returns Cytoscape.js formatted JSON for graph rendering."""
-    try:
-        data = DAGScheduler.get_dag_for_cytoscape(pipeline_id)
-        return jsonify(data)
-    except Exception as e:
-        logger.error(f"Error generating DAG for pipeline '{pipeline_id}': {e}")
-        return jsonify({"error": str(e)}), 400
-
-
 @app.route("/api/pipeline/<pipeline_id>/status")
 def api_pipeline_status(pipeline_id):
-    """Returns status summary for live frontend polling."""
+    """Returns pipeline status and task status map for live frontend polling."""
     pipe = PipelineModel.get_by_id(pipeline_id)
     if not pipe:
         return jsonify({"error": "Pipeline not found"}), 404
@@ -161,7 +202,7 @@ def api_pipeline_status(pipeline_id):
 
 @app.route("/api/job/<task_id>/logs")
 def api_job_logs(task_id):
-    """Returns execution log text for real-time log polling."""
+    """Returns raw execution log text for real-time log polling."""
     task = TaskModel.get_by_id(task_id)
     if not task:
         return jsonify({"error": "Task not found"}), 404
@@ -177,29 +218,14 @@ def api_job_logs(task_id):
         return jsonify({"logs": f"Error reading log: {e}"})
 
 
-# ----------------------------------------------------------------------------
-# Application Startup
-# ----------------------------------------------------------------------------
-
-def start_services():
-    """Initializes DB and background orchestrator."""
-    global orchestrator
-    DatabaseManager.init_db()
-    if orchestrator is None:
-        orchestrator = OrchestratorServer(poll_interval=2.0)
-        orchestrator.start(blocking=False)
-
-
 def main():
     """CLI entrypoint for eda-web command."""
-    start_services()
-    host = getattr(Config, "HOST", "127.0.0.1")
+    host = getattr(Config, "HOST", "0.0.0.0")
     port = getattr(Config, "PORT", 5000)
-    debug = getattr(Config, "DEBUG", True)
 
     print("=" * 60)
-    print(f"  EDA FLOW AUTOMATION - WEB GUI & API")
-    print(f"  Serving dashboard at: http://{host}:{port}")
+    print("  EDA FLOW AUTOMATION - WEB GUI & REST API")
+    print(f"  Serving dashboard at: http://127.0.0.1:{port}")
     print("=" * 60)
     app.run(host=host, port=port, debug=False, use_reloader=False)
 
