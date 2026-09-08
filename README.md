@@ -188,8 +188,8 @@ Open your browser and navigate to: `http://127.0.0.1:5000`
 - [x] Configuration management (`config/settings.py`)
 - [x] Database schema & thread-safe SQLite connection (`database/`)
 - [x] Models for pipelines, tasks, and system metrics (`database/models.py`)
-- [ ] Structured logging utility (`src/utils/logger.py`)
-- [ ] Distributed Resource Management System (`src/drms.py`)
-- [ ] NetworkX DAG scheduler engine (`src/scheduler.py`)
-- [ ] Central Hub orchestrator daemon (`src/server.py`)
+- [x] Structured logging utility (`src/utils/logger.py`)
+- [x] Distributed Resource Management System (`src/drms.py`)
+- [x] NetworkX DAG scheduler engine (`src/scheduler.py`)
+- [ ] Central Hub orchestrator daemon (`src/server.py`) [In Progress on dev_serv]
 - [ ] Flask web interface & Cytoscape.js DAG visualization (`web/`)
