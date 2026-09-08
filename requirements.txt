@@ -1,0 +1,16 @@
+﻿# Web Framework
+Flask==3.0.3
+Jinja2==3.1.4
+
+# Graph Manipulation & DAG processing
+networkx==3.3
+
+# Data Handling & Analytics
+pandas==2.2.2
+
+# Environment and Systems
+python-dotenv==1.0.1
+psutil==5.9.8
+
+# Production Server (WSGI)
+gunicorn==22.0.0
