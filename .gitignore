@@ -25,6 +25,7 @@ venv.bak/
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
 *.sqlite3
 
 # EDA Run Outputs & Logs

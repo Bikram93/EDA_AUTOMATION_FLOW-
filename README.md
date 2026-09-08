@@ -266,9 +266,9 @@ Ended at: 2026-09-08 23:00:34
 
 ---
 
-## 5. Quickstart Guide
+## 5. Quickstart & Operational Usage Guide
 
-### 5.1. Activate Environment
+### 5.1. Activate the Python Virtual Environment
 ```powershell
 # In PowerShell (Windows)
 .\venv\Scripts\Activate.ps1
@@ -289,7 +289,53 @@ pip install -r requirements.txt
 ```bash
 python -m web.app
 ```
-Open your browser at: **`http://127.0.0.1:5000`**
+*(This single command initializes SQLite, spawns the DRMS telemetry daemon, launches the background Orchestrator loop, and serves the Web GUI).*
+
+Now open your browser and navigate to:
+👉 **`http://127.0.0.1:5000`**
+
+---
+
+### 5.4. Dashboard User Walkthrough
+
+#### Step 1: Monitor Real-Time System Telemetry
+At the top of the dashboard, you will see 4 live metric cards:
+- **Host CPU Load**: Real-time CPU percentage sampled via `psutil`.
+- **Host RAM Usage**: Real-time memory allocation percentage.
+- **Worker Slots**: Active jobs vs maximum slot capacity (`Active / Max`).
+- **Total Pipelines**: Number of completed or ongoing flow runs.
+
+#### Step 2: Launch a New EDA Flow Run
+1. In the **"Launch New EDA Pipeline"** card, type a design name (e.g. `RISC-V 32b Core Tapeout`).
+2. Click **"Launch Pipeline Run"**.
+3. The platform dispatches a 5-stage VLSI design flow:
+   ```text
+   RTL Synthesis ──► Floorplanning ──► Place & Route ──┬──► Design Rule Check (DRC)
+                                                       └──► Layout Vs Schematic (LVS)
+   ```
+
+#### Step 3: Inspect Interactive Cytoscape.js DAG
+1. In the **"Pipeline History"** table, click **"Inspect DAG"** on your flow.
+2. An interactive graph will render showing all stages and dependency arrows:
+   - 🔵 **Blue (Pulsing)**: `RUNNING` (Stage currently active in worker thread)
+   - 🟢 **Green**: `COMPLETED` (Stage finished successfully with 0 errors)
+   - 🟠 **Orange**: `SKIPPED` (Downstream stage skipped due to parent failure)
+   - 🔴 **Red**: `FAILED` (Stage encountered syntax or design violation error)
+   - ⚪ **Gray**: `PENDING` (Waiting for predecessor stages to finish)
+
+#### Step 4: Stream Live Execution Logs
+1. In the stage table below the DAG, click **"View Logs"** (or click directly on any graph node).
+2. You will enter the **Job Detail Terminal View**, which automatically polls stdout/stderr every 2 seconds and streams live tool execution output.
+
+---
+
+### 5.5. Running the Background Orchestrator Standalone (CLI Mode)
+If you wish to run the backend scheduler without the web interface:
+```bash
+python -m src.server
+# Or using the installed console script:
+eda-server
+```
 
 ---
 
